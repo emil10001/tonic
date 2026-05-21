@@ -66,8 +66,15 @@ pub(crate) struct Child<T> {
     pub identifier: T,
     pub builder: Arc<DynLbPolicyBuilder>,
     pub state: LbState,
+    pub subchannels: Vec<WeakSubchannel>,
     policy: Box<DynLbPolicy>,
     work_scheduler: Arc<ChildWorkScheduler>,
+}
+
+impl<T> Child<T> {
+    pub fn subchannels(&self) -> impl Iterator<Item = Arc<dyn Subchannel>> + '_ {
+        self.subchannels.iter().filter_map(|weak| weak.upgrade())
+    }
 }
 
 /// A collection of data sent to a child of the ChildManager.
@@ -159,6 +166,7 @@ where
         for csc in channel_controller.created_subchannels {
             self.subchannel_to_child_idx
                 .insert((&csc).into(), child_idx);
+            self.children[child_idx].subchannels.push((&csc).into());
         }
         // Update the tracked state if the child produced an update.
         if let Some(state) = channel_controller.picker_update {
@@ -229,6 +237,7 @@ where
                         policy: e.policy,
                         builder: e.builder,
                         state: e.state,
+                        subchannels: e.subchannels,
                         work_scheduler: e.work_scheduler,
                     },
                 )
@@ -242,8 +251,11 @@ where
             let k = (builder.name(), identifier);
             if let Some(old_child) = old_children.remove(&k) {
                 let old_idx = old_child.identifier;
+                let mut subchannels = Vec::new();
                 for subchannel in mem::take(&mut old_child_subchannels[old_idx]) {
-                    self.subchannel_to_child_idx.insert(subchannel, new_idx);
+                    self.subchannel_to_child_idx
+                        .insert(subchannel.clone(), new_idx);
+                    subchannels.push(subchannel);
                 }
                 if old_pending_work.contains(&old_idx) {
                     pending_work.insert(new_idx);
@@ -253,6 +265,7 @@ where
                     builder,
                     identifier: k.1,
                     state: old_child.state,
+                    subchannels,
                     policy: old_child.policy,
                     work_scheduler: old_child.work_scheduler,
                 });
@@ -270,6 +283,7 @@ where
                     builder,
                     identifier: k.1,
                     state: LbState::initial(),
+                    subchannels: Vec::new(),
                     policy,
                     work_scheduler,
                 });
