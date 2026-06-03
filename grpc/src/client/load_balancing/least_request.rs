@@ -27,6 +27,7 @@ use std::collections::HashSet;
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::sync::Once;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
@@ -380,7 +381,7 @@ impl Picker for LeastRequestPicker {
 
         struct CompletionState {
             counter: Arc<AtomicUsize>,
-            active: std::sync::atomic::AtomicBool,
+            active: AtomicBool,
         }
 
         impl Drop for CompletionState {
@@ -393,7 +394,7 @@ impl Picker for LeastRequestPicker {
 
         let state = CompletionState {
             counter: selected.active_requests.clone(),
-            active: std::sync::atomic::AtomicBool::new(true),
+            active: AtomicBool::new(true),
         };
 
         let on_complete = Box::new(move || {

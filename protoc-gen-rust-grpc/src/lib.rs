@@ -1,6 +1,6 @@
 /*
  *
- * Copyright 2025 gRPC authors.
+ * Copyright 2026 gRPC authors.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -22,19 +22,33 @@
  *
  */
 
-/// An in-memory representation of a service config, usually provided to gRPC as
-/// a JSON object.
-// TODO: this shouldn't be public; users should set with JSON instead.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct ServiceConfig {
-    pub load_balancing_policy: Option<LbPolicyType>,
+//! Library for compiling and using the [`gRPC-Rust`] plugin for [`protoc`].
+//!
+//! [`protoc`]: https://protobuf.dev/installation/
+//! [`gRPC-Rust`]: https://crates.io/crates/grpc
+
+use std::path::PathBuf;
+
+fn bin_file(file: &str) -> PathBuf {
+    let mut path = bin().join(file);
+    if cfg!(target_os = "windows") {
+        path.set_extension("exe");
+    }
+    path
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub enum LbPolicyType {
-    #[default]
-    PickFirst,
-    RoundRobin,
-    // TODO: remove LeastRequest. It's here because it won't build without it.
-    LeastRequest,
+/// The full path to the `protoc` executable.
+pub fn protoc() -> PathBuf {
+    bin_file("protoc")
+}
+
+/// The full path to the gRPC `protoc` plugin, `protoc-gen-rust-grpc`.
+pub fn protoc_gen_rust_grpc() -> PathBuf {
+    bin_file("protoc-gen-rust-grpc")
+}
+
+/// The path to the `bin` directory containing the C++ binaries this package
+/// builds.
+pub fn bin() -> PathBuf {
+    PathBuf::from(env!("OUT_DIR")).join("bin")
 }
