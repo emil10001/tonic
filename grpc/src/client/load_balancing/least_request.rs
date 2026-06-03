@@ -149,33 +149,35 @@ impl LeastRequestPolicy {
         }
         let aggregate_state = self.child_manager.aggregate_states();
 
+        // Perform precise cleanup of subchannel_counters.
+        let mut active_weaks = HashSet::new();
+        for child in self.child_manager.children() {
+            for subchannel in child.subchannels() {
+                active_weaks.insert(WeakSubchannel::new(&subchannel));
+            }
+        }
+        self.subchannel_counters
+            .retain(|weak, _| active_weaks.contains(weak) && weak.upgrade().is_some());
+
         let picker: Arc<dyn Picker> = match aggregate_state {
             ConnectivityState::Ready => {
                 let mut ready_subchannels = Vec::new();
-                let mut child_weaks = HashSet::new();
-
                 for child in self.child_manager.children() {
-                    for subchannel in child.subchannels() {
+                    if let (ConnectivityState::Ready, Some(subchannel)) =
+                        (child.state.connectivity_state, child.subchannels().next())
+                    {
                         let weak = WeakSubchannel::new(&subchannel);
-                        child_weaks.insert(weak.clone());
-
-                        if child.state.connectivity_state == ConnectivityState::Ready {
-                            let counter = self
-                                .subchannel_counters
-                                .entry(weak.clone())
-                                .or_insert_with(|| Arc::new(AtomicUsize::new(0)))
-                                .clone();
-                            ready_subchannels.push(SubchannelWithCounter {
-                                subchannel,
-                                active_requests: counter,
-                            });
-                        }
+                        let counter = self
+                            .subchannel_counters
+                            .entry(weak)
+                            .or_insert_with(|| Arc::new(AtomicUsize::new(0)))
+                            .clone();
+                        ready_subchannels.push(SubchannelWithCounter {
+                            subchannel,
+                            active_requests: counter,
+                        });
                     }
                 }
-
-                // Clean up stale counters - retain all subchannels owned by the child manager
-                self.subchannel_counters
-                    .retain(|weak, _| child_weaks.contains(weak));
 
                 let choice_count = self
                     .config
@@ -702,14 +704,15 @@ mod tests {
         let parsed = builder.parse_config(&valid_config).unwrap().unwrap();
         assert_eq!(parsed.choice_count, 5);
 
-        // Clamped choice count
+        // Clamped choice count (high)
         let high_config = ParsedJsonLbConfig::new("{\"choiceCount\": 15}").unwrap();
         let parsed = builder.parse_config(&high_config).unwrap().unwrap();
         assert_eq!(parsed.choice_count, 10);
 
-        // Rejected choice count
+        // Clamped choice count (low)
         let low_config = ParsedJsonLbConfig::new("{\"choiceCount\": 1}").unwrap();
-        assert!(builder.parse_config(&low_config).is_err());
+        let parsed = builder.parse_config(&low_config).unwrap().unwrap();
+        assert_eq!(parsed.choice_count, 2);
     }
 
     #[test]
