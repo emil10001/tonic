@@ -26,7 +26,6 @@
 
 use core::panic;
 use std::error::Error;
-use std::mem;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -37,7 +36,6 @@ use std::vec;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
-use url::Url; // NOTE: http::Uri requires non-empty authority portion of URI
 
 use crate::StatusCodeError;
 use crate::StatusError;
@@ -54,6 +52,7 @@ use crate::client::load_balancing::ParsedJsonLbConfig;
 use crate::client::load_balancing::PickResult;
 use crate::client::load_balancing::Picker;
 use crate::client::load_balancing::QueuingPicker;
+use crate::client::load_balancing::WorkData;
 use crate::client::load_balancing::WorkScheduler;
 use crate::client::load_balancing::graceful_switch::GracefulSwitchPolicy;
 use crate::client::load_balancing::least_request;
@@ -84,9 +83,7 @@ use crate::core::RequestHeaders;
 use crate::credentials::ChannelCredentials;
 use crate::credentials::client::ClientHandshakeInfo;
 use crate::credentials::common::Authority;
-use crate::credentials::dyn_wrapper::DynChannelCredentials;
 use crate::rt;
-use crate::rt::GrpcEndpoint;
 use crate::rt::GrpcRuntime;
 use crate::rt::default_runtime;
 
@@ -168,11 +165,11 @@ impl Channel {
     /// Constructs a new gRPC channel.  Channel creation cannot fail, but if the
     /// target string is invalid, the returned channel will never connect, and
     /// will fail all RPCs.
-    pub fn new<C>(target: impl Into<String>, credentials: Arc<C>, options: ChannelOptions) -> Self
-    where
-        C: ChannelCredentials,
-        C::Output<Box<dyn GrpcEndpoint>>: GrpcEndpoint + 'static,
-    {
+    pub fn new(
+        target: impl Into<String>,
+        credentials: Arc<dyn ChannelCredentials>,
+        options: ChannelOptions,
+    ) -> Self {
         pick_first::reg();
         round_robin::reg();
         least_request::reg();
@@ -188,7 +185,7 @@ impl Channel {
                 target,
                 default_runtime(),
                 options,
-                credentials as Arc<dyn DynChannelCredentials>,
+                credentials,
             )),
         }
     }
@@ -248,12 +245,11 @@ impl PersistentChannel {
         target: impl Into<String>,
         runtime: GrpcRuntime,
         options: ChannelOptions,
-        credentials: Arc<dyn DynChannelCredentials>,
+        credentials: Arc<dyn ChannelCredentials>,
     ) -> Self {
-        // TODO(arjan-bal): Return errors here instead of panicking.
-        let target = Url::from_str(&target.into()).unwrap();
+        // TODO(nathanielford): Return errors here instead of panicking.
+        let target = Target::from_str(&target.into()).unwrap();
         let resolver_builder = global_registry().get(target.scheme()).unwrap();
-        let target = name_resolution::Target::from(target);
         let authority = options
             .channel_authority
             .clone()
@@ -346,15 +342,10 @@ impl ActiveChannel {
                         resolver.work(&mut resolver_channel_controller)
                     }
                     WorkQueueItem::ResolveNow => resolver.resolve_now(),
-                    WorkQueueItem::ScheduleLbPolicy => {
-                        *resolver_channel_controller
-                            .lb_work_scheduler
-                            .pending
-                            .lock()
-                            .unwrap() = false;
+                    WorkQueueItem::ScheduleLbPolicy(data) => {
                         resolver_channel_controller
                             .lb_policy
-                            .work(&mut resolver_channel_controller.lb_channel_controller);
+                            .work(data, &mut resolver_channel_controller.lb_channel_controller);
                     }
                     WorkQueueItem::SubchannelStateUpdate { subchannel, state } => {
                         resolver_channel_controller.lb_policy.subchannel_update(
@@ -491,10 +482,7 @@ impl ResolverChannelController {
         lb_watcher: Arc<Watcher<LbState>>,
         security_opts: SecurityOpts,
     ) -> Self {
-        let lb_work_scheduler = Arc::new(LbWorkScheduler {
-            pending: Mutex::default(),
-            wqtx: wqtx.clone(),
-        });
+        let lb_work_scheduler = Arc::new(LbWorkScheduler { wqtx: wqtx.clone() });
         let lb_channel_controller = LbChannelController {
             lb_work_scheduler: lb_work_scheduler.clone(),
             transport_registry: GLOBAL_TRANSPORT_REGISTRY.clone(),
@@ -591,23 +579,18 @@ impl load_balancing::ChannelController for LbChannelController {
 
 #[derive(Debug)]
 struct LbWorkScheduler {
-    pending: Mutex<bool>,
     wqtx: WorkQueueTx,
 }
 
 impl WorkScheduler for LbWorkScheduler {
-    fn schedule_work(&self) {
-        if mem::replace(&mut *self.pending.lock().unwrap(), true) {
-            // Already had a pending call scheduled.
-            return;
-        }
-        _ = self.wqtx.send(WorkQueueItem::ScheduleLbPolicy);
+    fn schedule_work(&self, data: Option<WorkData>) {
+        _ = self.wqtx.send(WorkQueueItem::ScheduleLbPolicy(data));
     }
 }
 
 pub(super) enum WorkQueueItem {
     // Call the LB policy to do work.
-    ScheduleLbPolicy,
+    ScheduleLbPolicy(Option<WorkData>),
     // Provide the subchannel state update to the LB policy.
     SubchannelStateUpdate {
         subchannel: Arc<dyn Subchannel>,
@@ -667,8 +650,8 @@ impl<T: Clone> WatcherIter<T> {
     }
 }
 
-/// Parses the host and port from a URL-encoded string. When the input can not
-/// be parsed as (host, port) pair, it returns the entire input as the host.
+/// Parses the host and port from a string. When the input can not be parsed
+/// as (host, port) pair, it returns the entire input as the host.
 fn parse_authority(host_and_port: &str) -> Authority {
     // Handle bracketed IPv6 addresses (e.g., "[::1]:80").
     if let Some(stripped) = host_and_port.strip_prefix('[')

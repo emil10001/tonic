@@ -1,6 +1,6 @@
 [package]
 name = "grpc"
-version = "0.9.0"
+version = "0.10.0"
 authors = ["gRPC Authors"]
 license = "MIT"
 homepage = "https://grpc.io"
@@ -59,6 +59,7 @@ http-body = "1.0.1"
 hyper = { version = "1.6.0", features = ["client", "http2"] }
 itoa = "1.0"
 parking_lot = "0.12.4"
+percent-encoding = "2.3"
 pin-project-lite = "0.2.16"
 rand = "0.9"
 rustls = { version = "0.23", optional = true, default-features = false, features = [
@@ -91,6 +92,7 @@ trait-variant = "0.1.2"
 url = "2.5.0"
 
 [dev-dependencies]
+tokio = { version = "1.37.0", features = ["test-util"] }
 async-stream = "0.3.6"
 criterion = "0.5"
 hickory-server = "0.25.2"
