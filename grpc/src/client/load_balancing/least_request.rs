@@ -48,6 +48,7 @@ use crate::client::load_balancing::Picker;
 use crate::client::load_balancing::QueuingPicker;
 use crate::client::load_balancing::Subchannel;
 use crate::client::load_balancing::SubchannelState;
+use crate::client::load_balancing::WorkData;
 use crate::client::load_balancing::child_manager::ChildManager;
 use crate::client::load_balancing::child_manager::ChildUpdate;
 use crate::client::load_balancing::pick_first;
@@ -320,8 +321,8 @@ impl LbPolicy for LeastRequestPolicy {
         self.update_picker(channel_controller, false);
     }
 
-    fn work(&mut self, channel_controller: &mut dyn ChannelController) {
-        self.child_manager.work(channel_controller);
+    fn work(&mut self, data: Option<WorkData>, channel_controller: &mut dyn ChannelController) {
+        self.child_manager.work(data, channel_controller);
         self.update_picker(channel_controller, false);
     }
 
@@ -686,6 +687,9 @@ mod tests {
     impl Subchannel for MockSubchannel {
         fn address(&self) -> Address {
             self.address.clone()
+        }
+        fn get_attribute_dyn(&self, _id: std::any::TypeId) -> Option<&dyn std::any::Any> {
+            None
         }
         fn connect(&self) {}
     }

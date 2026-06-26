@@ -245,10 +245,11 @@ where
             let k = (builder.name(), identifier);
             if let Some(old_child) = old_children.remove(&k) {
                 let old_idx = old_child.identifier;
+                let new_child_idx = self.children.len();
                 let mut subchannels = Vec::new();
                 for subchannel in mem::take(&mut old_child_subchannels[old_idx]) {
                     self.subchannel_to_child_idx
-                        .insert(subchannel.clone(), new_idx);
+                        .insert(subchannel.clone(), new_child_idx);
                     subchannels.push(subchannel);
                 }
                 self.handle_to_child_idx
