@@ -31,6 +31,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
+use crate::attributes::Attributes;
 use crate::client::ConnectivityState;
 use crate::client::load_balancing::ChannelController;
 use crate::client::load_balancing::DynLbPolicyBuilder;
@@ -281,7 +282,7 @@ impl LbPolicy for LeastRequestPolicy {
         let service_config = update.service_config;
         let updates = unique_endpoints.into_iter().map(|e| {
             let update = ResolverUpdate {
-                attributes: crate::attributes::Attributes::default(),
+                attributes: Attributes::default(),
                 endpoints: Ok(vec![e.clone()]),
                 service_config: service_config.clone(),
                 resolution_note: None,
